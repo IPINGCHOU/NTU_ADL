@@ -97,7 +97,7 @@ def preprocessing_dataset(data_paragraphs, flag, tokenizer):
                     answerable = 1
                     answer = tokenizer.encode(qa['answers'][0]['text'], add_special_tokens = False)
 
-                    first_SEP_pos = np.where(np.array(question_tokenized['input_ids'][0])==102)[0]
+                    first_SEP_pos = np.where(np.array(question_tokenized['input_ids'][0])==102)[0][0]
                     match = find_sub_list(answer, question_tokenized['input_ids'][0][first_SEP_pos:])
                     if len(match) == 0:
                         non_match_count += 1
@@ -105,8 +105,8 @@ def preprocessing_dataset(data_paragraphs, flag, tokenizer):
                     else:
                         answer_start, answer_end = match[0]
                         matched_count += 1
-                        answer_start -= 1
-                        answer_end -= 1
+                        answer_start += (first_SEP_pos-1)
+                        answer_end += (first_SEP_pos-1)
 
                 # prepare dict for question list and ans_list
                 question_tokenized['id'] = ids
@@ -260,9 +260,8 @@ def get_matched_count(pred, gt):
 def masked_out_noncontext(ans, segments):
     segments = segments[:,1:].float()
     ans = ans*segments
-    print(ans)
     ans[ans == 0] = -float('inf')
-    print(ans)
+    ans[:,-1] = -float('inf')
 
     return ans
 
@@ -406,9 +405,5 @@ for epoch in range(max_epoch):
 #%%
 del model
 torch.cuda.empty_cache()
-
-# %%
-a = [1,2,3,4,5,6,7,6,5,4,3,2,1,7]
-
 
 # %%
