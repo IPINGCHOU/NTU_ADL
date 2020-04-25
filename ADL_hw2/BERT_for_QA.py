@@ -18,14 +18,15 @@ VALID_ROUTE = './data/dev.json'
 TEST_ROUTE = './data/test.json'
 
 DEVICE = 'cuda:0'
-MODEL_SAVEPATH = './model_save/'
 
-MAX_LENGTH = 512
-DROPOUT_RATE = 0.1
-BATCH_SIZE = 10
-LEARNING_RATE = 5e-05
-WEIGHT_DECAY = 1e-4
-EPOCH = 10
+MODEL_SAVEPATH = './model_save_4/'
+
+MAX_LENGTH = 480
+DROPOUT_RATE = 0
+BATCH_SIZE = 6
+BERT_LEARNING_RATE = 1e-05
+LINEAR_LEARNING_RATE = 1e-05
+EPOCH = 20
 THRESHOLD = 0.5
 
 #%%
@@ -106,7 +107,7 @@ def preprocessing_dataset(data_paragraphs, flag, tokenizer):
                         answer_start, answer_end = match[0]
                         matched_count += 1
                         answer_start += (first_SEP_pos-1)
-                        answer_end += (first_SEP_pos-1)
+                        answer_end += (first_SEP_pos) # -1 for model output matching
 
                 # prepare dict for question list and ans_list
                 question_tokenized['id'] = ids
@@ -211,35 +212,47 @@ class QA_Model(nn.Module):
     def __init__(self):
         super(QA_Model, self).__init__()
 
-        self.num_labels = 513
         self.hidden_dim = 768
         self.vocab_size = 21128 # should not be used, just in case
 
         self.bert = BertModel.from_pretrained('bert-base-chinese')
 
-        # for answerable start and end predict
         self.answerable_layer = nn.Sequential(
-                nn.Dropout(DROPOUT_RATE),
+                nn.Linear(self.hidden_dim, 384),
                 nn.ReLU(),
-                nn.Linear(self.hidden_dim, 1)
+                nn.Linear(384, 128),
+                nn.ReLU(),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.Linear(64, 1)
         )
 
         self.start_layer = nn.Sequential(
-                nn.Dropout(DROPOUT_RATE),
+                nn.Linear(self.hidden_dim, 384),
                 nn.ReLU(),
-                nn.Linear(self.hidden_dim, 1)
+                nn.Linear(384, 128),
+                nn.ReLU(),
+                nn.Linear(128,64),
+                nn.ReLU(),
+                nn.Linear(64, 1)
         )
 
         self.end_layer = nn.Sequential(
-                nn.Dropout(DROPOUT_RATE),
+                nn.Linear(self.hidden_dim, 384),
                 nn.ReLU(),
-                nn.Linear(self.hidden_dim,1)
+                nn.Linear(384, 128),
+                nn.ReLU(),
+                nn.Linear(128,64),
+                nn.ReLU(),
+                nn.Linear(64, 1)
         )
 
     def forward(self, qc, segment, mask):
 
         # sent BERT
-        hidden_layer, output = self.bert(qc, segment, mask)
+        hidden_layer, _ = self.bert(input_ids = qc,
+                                    attention_mask = mask,
+                                    token_type_ids = segment)
         # sent answerable start end
         answerable = self.answerable_layer(hidden_layer[:,0])
         ans_start = self.start_layer(hidden_layer[:,1:])
@@ -257,11 +270,14 @@ def get_matched_count(pred, gt):
 
     return matched, len(pred)
 
-def masked_out_noncontext(ans, segments):
+def masked_out_noncontext(ans, segments, attention_mask):
     segments = segments[:,1:].float()
     ans = ans*segments
-    ans[ans == 0] = -float('inf')
-    ans[:,-1] = -float('inf')
+    ans[ans == 0] = torch.tensor(-float('inf')).to(DEVICE)
+    # ans[:,-1] = -float('inf')
+    for idx, att in enumerate(attention_mask):
+        ptr = (att==1).nonzero()[-1][0]
+        ans[idx][att] = torch.tensor(-float('inf')).to(DEVICE)
 
     return ans
 
@@ -321,14 +337,16 @@ def _run_epoch(epoch, training):
         )
 
     if training:
-        history['train'].append({'answerable_loss':BCE_answerable_loss/len(trange),
+        history['train'].append({'Epoch':epoch,
+                                'answerable_loss':BCE_answerable_loss/len(trange),
                                 'start_loss':CE_start_loss/len(trange),
                                 'end_loss':CE_end_loss/len(trange)}
                 )
     else:
-        history['valid'].append({'answerable_loss':BCE_answerable_loss/len(trange),
-                        'start_loss':CE_start_loss/len(trange),
-                        'end_loss':CE_end_loss/len(trange)}
+        history['valid'].append({'Epoch':epoch,
+                                'answerable_loss':BCE_answerable_loss/len(trange),
+                                'start_loss':CE_start_loss/len(trange),
+                                'end_loss':CE_end_loss/len(trange)}
                 )
 
 
@@ -349,9 +367,9 @@ def _run_iter(qcs, segments, masks, answers):
     gt_end = answers[:,2]
     
     gt_answerable = gt_answerable.float()
-    # mask out ans_start, ans_end
-    ans_start = masked_out_noncontext(ans_start, segments)
-    ans_end = masked_out_noncontext(ans_end, segments)
+    # mask out ans_start, ans_end with non-context token
+    # ans_start = masked_out_noncontext(ans_start, segments, masks)
+    # ans_end = masked_out_noncontext(ans_end, segments, masks)
 
     loss_answerable = answerable_criteria(answerable, gt_answerable)
     loss_start = start_criteria(ans_start, gt_start)
@@ -361,12 +379,14 @@ def _run_iter(qcs, segments, masks, answers):
 
 
 def save(epoch):
-    if not os.path.exists(MODEL_SAVEPATH):
-        os.makedirs(MODEL_SAVEPATH)
+    # if not os.path.exists(MODEL_SAVEPATH):
+    #     os.makedirs(MODEL_SAVEPATH)
     
-    torch.save(model.stat_dict(), MODEL_SAVEPATH+'model.epoch.'+str(epoch))
+    torch.save(model.state_dict(), MODEL_SAVEPATH+'model.epoch.'+str(epoch))
     with open(MODEL_SAVEPATH + 'history.json', 'w') as f:
         json.dump(history, f, indent = 4)
+    
+    print('model {} saved'.format(epoch))
 
 
 #%%
@@ -375,16 +395,42 @@ from transformers import AdamW
 
 model = QA_Model()
 param_optimizer = list(model.named_parameters())
-no_decay = ['bias', 'LayerNorm.weight']
-optimizer_grouped_parameters = [
-    {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': WEIGHT_DECAY},
-    {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-    ]
 
-optimizer = AdamW(optimizer_grouped_parameters,
-                  lr = LEARNING_RATE,
-                  correct_bias = True   
+# with decay
+# no_decay = ['bias', 'LayerNorm.weight']
+# optimizer_grouped_parameters = [
+#     {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': WEIGHT_DECAY},
+#     {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0},
+#     {'params': model.answerable_layer.parameters(), 'lr':LINEAR_LEARNING_RATE},
+#     {'params': model.start_layer.parameters(), 'lr':LINEAR_LEARNING_RATE},
+#     {'params': model.end_layer.parameters(), 'lr':LINEAR_LEARNING_RATE}
+#     ]
+# optimizer_grouped_parameters = [
+#     {'params': model.answerable_layer.parameters(), 'lr':LINEAR_LEARNING_RATE},
+#     {'params': model.start_layer.parameters(), 'lr':LINEAR_LEARNING_RATE},
+#     {'params': model.end_layer.parameters(), 'lr':LINEAR_LEARNING_RATE}
+#     ]
+# fix embedding and first encoder layer
+# for param in model.bert.embeddings.parameters():
+#     param.requires_grad = False
+# for param in model.bert.encoder.layer[0].parameters():
+#     param.requires_grad = False
+
+import torch.optim as optim
+# optimizer = AdamW(optimizer_grouped_parameters,
+#                   lr = BERT_LEARNING_RATE,
+#                   correct_bias = False
+#             )
+
+optimizer = AdamW(model.parameters(),
+                  lr = BERT_LEARNING_RATE,
+                  correct_bias = True
             )
+
+# optimizer = optim.AdamW(optimizer_grouped_parameters,
+#                         lr = BERT_LEARNING_RATE
+#             )
+
 
 answerable_criteria = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(0.45))
 start_criteria = torch.nn.CrossEntropyLoss(ignore_index = -1)
@@ -396,14 +442,36 @@ history = {'train':[],'valid':[]}
 
 #%%
 # training
+print('Batch size:' + str(BATCH_SIZE))
+
 for epoch in range(max_epoch):
     print('Epoch: {}'.format(epoch))
     _run_epoch(epoch, training = True)
     _run_epoch(epoch, training = False)
     save(epoch)
+    print('=========================')
 
 #%%
-del model
-torch.cuda.empty_cache()
+# # clear GPU cache
+# del model
+# torch.cuda.empty_cache()
+
+# # %%
+
+# # train_paragraph : original data
+# # train_qa : dataset
+# # train_QA : torch utils dataset
+
+# # first paragraph train_paragraphs[0][0]
+# train_paragraphs[0][0]
+# tokenizer.convert_ids_to_tokens(train_qa[0]['input_ids'])
+
+# %%
+# test_num = 1
+# ans_start, ans_end = valid_qa[test_num]['answer'][1], valid_qa[test_num]['answer'][2]
+# tokenizer.convert_ids_to_tokens(valid_qa[test_num]['input_ids'][ans_start+1:ans_end+1])
+
+# # %%
+
 
 # %%
