@@ -14,7 +14,7 @@ torch.cuda.manual_seed_all(seed)
 
 DEVICE = 'cuda:0'
 
-MODEL_SAVEPATH = './cheat_QAcombine_model_1layers_context_truncated_480_max_512/'
+MODEL_SAVEPATH = './QAcombine_model_1layers_context_truncated_480_max_512/'
 CHOSED_BATCH = 0
 
 MAX_LENGTH = 512
