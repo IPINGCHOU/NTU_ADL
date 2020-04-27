@@ -1,0 +1,1 @@
+python3 BERT_final_pred.py $1 $2
