@@ -19,14 +19,14 @@ TEST_ROUTE = './data/test.json'
 
 DEVICE = 'cuda:0'
 
-MODEL_SAVEPATH = './model_context_truncated/'
+MODEL_SAVEPATH = './model_context_truncated_480_max_512_single768_drop0.5/'
 
 MAX_LENGTH = 512
-MAX_CONTEXT_LENGTH = 449
+MAX_CONTEXT_LENGTH = 480
 DROPOUT_RATE = 0.5
 BATCH_SIZE = 6
-BERT_LEARNING_RATE = 1e-05
-LINEAR_LEARNING_RATE = 1e-05
+BERT_LEARNING_RATE = 5e-06
+LINEAR_LEARNING_RATE = 5e-06
 EPOCH = 20
 THRESHOLD = 0.5
 
@@ -104,6 +104,7 @@ def preprocessing_dataset(data_paragraphs, flag, tokenizer):
                         answer_start, answer_end = match[0]
                         matched_count += 1
                         answer_start -= 1
+                        answer_end -= 1
 
                 # prepare dict for question list and ans_list
                 question_tokenized['id'] = ids
@@ -128,6 +129,7 @@ tokenizer = BertTokenizer.from_pretrained('bert-base-chinese', do_lower_case = T
 
 print('preprocessing training dataset...')
 train_qa = preprocessing_dataset(train_paragraphs, 'train', tokenizer)
+
 print('preprocessing valid dataset...')
 valid_qa = preprocessing_dataset(valid_paragraphs, 'train', tokenizer)
 # TODO
@@ -213,44 +215,67 @@ class QA_Model(nn.Module):
 
         self.bert = BertModel.from_pretrained('bert-base-chinese')
 
-        self.answerable_layer = nn.Sequential(
-                nn.Linear(self.hidden_dim, 384),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(384, 128),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(128, 64),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(64, 1)
-        )
 
-        self.start_layer = nn.Sequential(
-                nn.Linear(self.hidden_dim, 384),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(384, 128),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(128,64),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(64, 1)
-        )
+        if DROPOUT_RATE == 0:
+            self.answerable_layer = nn.Linear(self.hidden_dim, 1)
+            self.start_layer = nn.Linear(self.hidden_dim,1)
+            self.end_layer = nn.Linear(self.hidden_dim,1)
 
-        self.end_layer = nn.Sequential(
-                nn.Linear(self.hidden_dim, 384),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(384, 128),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(128,64),
-                nn.Dropout(DROPOUT_RATE),
-                nn.ReLU(),
-                nn.Linear(64, 1)
-        )
+        else:
+            self.answerable_layer = nn.Sequential(
+                    nn.Dropout(DROPOUT_RATE),
+                    nn.Linear(self.hidden_dim, 1),
+            )
+
+            self.start_layer = nn.Sequential(
+                    nn.Dropout(DROPOUT_RATE),
+                    nn.Linear(self.hidden_dim, 1),
+            )
+
+            self.end_layer = nn.Sequential(
+                    nn.Dropout(DROPOUT_RATE),
+                    nn.Linear(self.hidden_dim, 1),
+            )
+
+        # else:
+        #     self.answerable_layer = nn.Sequential(
+        #             nn.Linear(self.hidden_dim, 384),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(384, 192),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(192, 96),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(96, 1)
+        #     )
+
+        #     self.start_layer = nn.Sequential(
+        #             nn.Linear(self.hidden_dim, 384),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(384, 192),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(192, 96),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(96, 1)
+        #     )
+
+        #     self.end_layer = nn.Sequential(
+        #             nn.Linear(self.hidden_dim, 384),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(384, 192),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(192, 96),
+        #             nn.Dropout(DROPOUT_RATE),
+        #             nn.ReLU(),
+        #             nn.Linear(96, 1)
+        #     )
 
     def forward(self, qc, segment, mask):
 
@@ -260,8 +285,8 @@ class QA_Model(nn.Module):
                                     token_type_ids = segment)
         # sent answerable start end
         answerable = self.answerable_layer(hidden_layer[:,0])
-        ans_start = self.start_layer(hidden_layer[:,1:MAX_CONTEXT_LENGTH+2])
-        ans_end = self.end_layer(hidden_layer[:,1:MAX_CONTEXT_LENGTH+2])
+        ans_start = self.start_layer(hidden_layer[:,1:MAX_CONTEXT_LENGTH+1])
+        ans_end = self.end_layer(hidden_layer[:,1:MAX_CONTEXT_LENGTH+1])
 
         return answerable, ans_start, ans_end
 
@@ -344,6 +369,16 @@ def _run_epoch(epoch, training):
                 )
 
 
+def mask_PAD(ans, qcs):
+    for i, (a, qc) in enumerate(zip(ans,qcs)):
+        qc = qc[1:MAX_CONTEXT_LENGTH+2]
+        PAD_ptr = (qc==0).nonzero()
+        a[PAD_ptr] = torch.tensor(-float('inf')).to(DEVICE)
+        ans[i] = a
+    
+    return ans
+
+
 def _run_iter(qcs, segments, masks, answers):
     qcs = qcs.to(DEVICE)
     segments = segments.to(DEVICE) # int64
@@ -361,6 +396,10 @@ def _run_iter(qcs, segments, masks, answers):
     gt_end = answers[:,2]
     
     gt_answerable = gt_answerable.float()
+
+    # mask out PAD loss
+    ans_start = mask_PAD(ans_start, qcs)
+    ans_end = mask_PAD(ans_end, qcs)
 
     loss_answerable = answerable_criteria(answerable, gt_answerable)
     loss_start = start_criteria(ans_start, gt_start)
@@ -387,20 +426,6 @@ from transformers import AdamW
 model = QA_Model()
 param_optimizer = list(model.named_parameters())
 
-# with decay
-# no_decay = ['bias', 'LayerNorm.weight']
-# optimizer_grouped_parameters = [
-#     {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': WEIGHT_DECAY},
-#     {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0},
-#     {'params': model.answerable_layer.parameters(), 'lr':LINEAR_LEARNING_RATE},
-#     {'params': model.start_layer.parameters(), 'lr':LINEAR_LEARNING_RATE},
-#     {'params': model.end_layer.parameters(), 'lr':LINEAR_LEARNING_RATE}
-#     ]
-# optimizer_grouped_parameters = [
-#     {'params': model.answerable_layer.parameters(), 'lr':LINEAR_LEARNING_RATE},
-#     {'params': model.start_layer.parameters(), 'lr':LINEAR_LEARNING_RATE},
-#     {'params': model.end_layer.parameters(), 'lr':LINEAR_LEARNING_RATE}
-#     ]
 # fix embedding and first encoder layer
 # for param in model.bert.embeddings.parameters():
 #     param.requires_grad = False
@@ -418,12 +443,7 @@ optimizer = AdamW(model.parameters(),
                   correct_bias = True
             )
 
-# optimizer = optim.AdamW(optimizer_grouped_parameters,
-#                         lr = BERT_LEARNING_RATE
-#             )
-
-
-answerable_criteria = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(0.45))
+answerable_criteria = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(0.44))
 start_criteria = torch.nn.CrossEntropyLoss(ignore_index = -1)
 end_criteria = torch.nn.CrossEntropyLoss(ignore_index= -1)
 

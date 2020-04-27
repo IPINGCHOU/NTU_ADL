@@ -16,19 +16,22 @@ TRAIN_ROUTE = './data/train.json'
 VALID_ROUTE = './data/dev.json'
 TEST_ROUTE = './data/test.json'
 
-DEVICE = 'cuda:1'
+DEVICE = 'cuda:0'
 
-MODEL_SAVEPATH = './model_context_truncated/'
+MODEL_SAVEPATH = 'model_context_truncated_447_max_480/'
 CHOSED_BATCH = 1
 
-MAX_LENGTH = 512
-MAX_CONTEXT_LENGTH = 449
+MAX_LENGTH = 480
 DROPOUT_RATE = 0.5
-BATCH_SIZE = 6
+BATCH_SIZE =  6
 BERT_LEARNING_RATE = 1e-05
 LINEAR_LEARNING_RATE = 1e-05
 EPOCH = 20
-THRESHOLD = 0.5
+
+
+THRESHOLD = 0.4
+ANS_CUT = 30
+MAX_CONTEXT_LENGTH = 447
 
 print('testing dev data')
 TEST_INPUT = './data/dev.json'
@@ -149,39 +152,39 @@ class QA_Model(nn.Module):
                 nn.Linear(self.hidden_dim, 384),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(384, 128),
+                nn.Linear(384, 192),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(128, 64),
+                nn.Linear(192, 96),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(64, 1)
+                nn.Linear(96, 1)
         )
 
         self.start_layer = nn.Sequential(
                 nn.Linear(self.hidden_dim, 384),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(384, 128),
+                nn.Linear(384, 192),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(128,64),
+                nn.Linear(192, 96),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(64, 1)
+                nn.Linear(96, 1)
         )
 
         self.end_layer = nn.Sequential(
                 nn.Linear(self.hidden_dim, 384),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(384, 128),
+                nn.Linear(384, 192),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(128,64),
+                nn.Linear(192, 96),
                 nn.Dropout(DROPOUT_RATE),
                 nn.ReLU(),
-                nn.Linear(64, 1)
+                nn.Linear(96, 1)
         )
 
     def forward(self, qc, segment, mask):
@@ -192,10 +195,11 @@ class QA_Model(nn.Module):
                                     token_type_ids = segment)
         # sent answerable start end
         answerable = self.answerable_layer(hidden_layer[:,0])
-        ans_start = self.start_layer(hidden_layer[:,1:MAX_CONTEXT_LENGTH+2])
-        ans_end = self.end_layer(hidden_layer[:,1:MAX_CONTEXT_LENGTH+2])
+        ans_start = self.start_layer(hidden_layer[:,1:MAX_CONTEXT_LENGTH+1])
+        ans_end = self.end_layer(hidden_layer[:,1:MAX_CONTEXT_LENGTH+1])
 
         return answerable, ans_start, ans_end
+
 
 from tqdm import tqdm as tqdm
 from torch.utils.data import DataLoader
@@ -209,13 +213,15 @@ dataloader = DataLoader(dataset=test_QA,
                         shuffle=False,
                         collate_fn=test_QA.collate_fn,
                         num_workers=4)
-
-trange = tqdm(enumerate(dataloader), total=len(dataloader), desc = 'predict')
 answerable_pred = []
 answer_start_pred = []
 answer_end_pred = []
 answer_ids = []
+
+trange = tqdm(enumerate(dataloader), total=len(dataloader), desc = 'predict')
+
 for i, (qcs, segments, masks, ids) in trange:
+    model.eval()
     qcs = qcs.to(DEVICE)
     segments = segments.to(DEVICE)
     masks = masks.to(DEVICE)
@@ -227,62 +233,124 @@ for i, (qcs, segments, masks, ids) in trange:
     answerable_pred.extend(answerable.to('cpu'))
     # ans_start, end adjust
 
-    for i, (start, end) in enumerate(zip(ans_start, ans_end)):
-        _, start = start.data.topk(1, dim = 0) 
-        _, end = end.data.topk(1, dim = 0) 
-        start += 1
-        end += 1
-        answer_start_pred.extend(start.to('cpu').squeeze(-1))
-        answer_end_pred.extend(end.to('cpu').squeeze(-1))
-    
-    if i == 0:
-        break
+    _, start = ans_start.data.topk(1, dim = 1)
+    _, end = ans_end.data.topk(1, dim = 1)
+    start += 1
+    end += 1
 
+    answer_start_pred.extend(start.to('cpu').squeeze(-1))
+    answer_end_pred.extend(end.to('cpu').squeeze(-1))
+
+    # for j, (start, end) in enumerate(zip(ans_start, ans_end)):
+    #     _, start = start.data.topk(1, dim = 0) 
+    #     _, end = end.data.topk(1, dim = 0) 
+    #     start += 1
+    #     end += 1
+    #     answer_start_pred.extend(start.to('cpu').squeeze(-1))
+    #     answer_end_pred.extend(end.to('cpu').squeeze(-1))
+    
     # ids
     answer_ids.extend(ids)
 
 answerable_pred = torch.cat(answerable_pred).detach().numpy().astype(int)
-# answer_start_pred = answer_start_pred.detach().numpy().astype(int)
-# answer_end_pred = answer_end_pred.detach().numpy().astype(int)
+answer_start_pred = torch.cat(answer_start_pred).detach().numpy().astype(int)
+answer_end_pred = torch.cat(answer_end_pred).detach().numpy().astype(int)
 
 #%%
 QA_pred = {}
-bug_list= []
-bug_list2=[]
+pred_ans1 = 0
+pred_ans0 = 0
+pred_ans0_0string = 0
+bug_list1 = []
+bug_list = []
+bug_list2 = []
+
 for sent_id, (now_id, answerable, ans_st, ans_end) in enumerate(zip(answer_ids, answerable_pred, answer_start_pred, answer_end_pred)):
     print('Now ids:' + str(sent_id), end='\r')
+
+    ans_end += 1
     if answerable == 0:
         QA_pred[now_id] = ''
+        pred_ans0 += 1
     else:
-        # if ans_st < ans_end:
-        #     ans = test_qa[sent_id]['input_ids'][ans_st:ans_end]
-        # elif ans_st > ans_end:
-        #     ans = test_qa[sent_id]['input_ids'][ans_end:ans_st]
-        #     # ans = []
-        # else:
-        #     bug_list.append((ans_st, ans_end))
-        #     ans = test_qa[sent_id]['input_ids'][ans_st]
-
+        # for exchanging
+        if ans_st < ans_end:
+            ans = test_qa[sent_id]['input_ids'][ans_st:ans_end]
+        elif ans_st > ans_end:
+            bug_list2.append((ans_st, ans_end))
+            ans = test_qa[sent_id]['input_ids'][ans_end:ans_st]
+        
+        # non changing
         ans = test_qa[sent_id]['input_ids'][ans_st:ans_end]
         
         ans = np.array(ans)
         ans = ans[ans != 100]
         ans = ans.tolist()
 
-        ans = ans[:38]
-
-        ans_string = tokenizer.decode(ans).replace(" ", "")
+        # ans = ans[:ANS_CUT]
+        # discard too long answer
+        if len(ans) > 37:
+            QA_pred[now_id] = ''
+            continue
+        else:
+            ans_string = tokenizer.decode(ans).replace(" ", "")
+            QA_pred[now_id] = ans_string
 
         # print(ans_string)
 
         # ans_string = ans_string[:30]
-        QA_pred[now_id] = ans_string
 
-
+#%%
+print('len > 0: ' +str(pred_ans1) )
+print('answerable false: ' + str(pred_ans0))
+print('len = 0: ' + str(pred_ans0_0string))
+print(bug_list)
+print(bug_list1)
+print(bug_list2)
+ 
 # %%
 # saving data
 
-with open('model_pred_context_trun_epoch1_38.json', 'w') as fp:
+with open('context_trun_19.json', 'w') as fp:
     json.dump(QA_pred, fp)
 
 #%%
+
+# trun 450
+# preprocess1 : if st > ed : x[ed:st], cut 38, threshold 0.5, model truncated epoch1
+# preprocess2 : if st > ed : x[ed:st], cut 38, threshold 0.4, model truncated epoch 1
+# preprcoess3 : same 1, threshold 0.3
+# preprocess4 : same 1, threshold 0.2, cut 30
+# preprocess5 : same 1, threshold 0.1, cut 25
+# preprocess6 : same 1, threshold 0.1, cut 20
+
+# trun 470
+# preprocess7 : same 1, threshold 0.1, cut 30
+# preprocess8 : no st>ed change, threshold 0.1, cut 30 
+
+# trun 470 + freeze bert embedding, encoder layer 1
+# preprocess9 : same1, threshold 0.1, cut 30
+# preprocess10 : no st>ed change, threshold0.1, cut 30
+
+# trun 430 total 480
+# preprocess11: no st>ed, threshold 0.1 ,cut 30
+# preprocess12: no st>ed, threshold 0.6, cut 30 
+# preprocess13: exchange, threshold 0.5, cut 30
+# preprocess14: exchange, threshold 0.4, no cut
+# preprocess16: exchange, threshold 0.3, discard over 25
+# preprocess17: exchange, threshold 0.3, discard over 30
+# preprocess18: no exchange, threshold 0.3, discard over 30
+
+# trun 430 total 480 freeze bert encoder layer1
+# preprocess 15: exchange, threshold 0.3, no cut
+
+# trun 447 total 480 epoch 2
+# preprocess 19: no exchange, threshold 0.4, discard over 30
+
+# #%%
+
+#%%
+QA_pred
+
+# %%
+
