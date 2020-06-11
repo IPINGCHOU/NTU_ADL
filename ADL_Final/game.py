@@ -181,11 +181,11 @@ while run:
                 bullets.pop(bullets.index(bullet))
 
         keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT] and plane.x > 0: 
+        if keys[pygame.K_LEFT] and plane.x > PLANE_VEL + PLANE_HITBOX_RADIUS: 
             plane.x -= PLANE_VEL
             plane.left = True
             plane.right = False
-        elif keys[pygame.K_RIGHT] and plane.x < 500 - PLANE_VEL - PLANE_WIDTH:
+        elif keys[pygame.K_RIGHT] and plane.x < 500 - PLANE_VEL - PLANE_HITBOX_RADIUS:
             plane.x += PLANE_VEL
             plane.left = False
             plane.right = True
@@ -193,9 +193,9 @@ while run:
             plane.left, plane.right = False, False
             plane.horizontal_move = 0
 
-        if keys[pygame.K_UP] and plane.y > 0:
+        if keys[pygame.K_UP] and plane.y > 0 + PLANE_HITBOX_RADIUS:
             plane.y -= PLANE_VEL
-        if keys[pygame.K_DOWN] and plane.y < 500 - PLANE_HEIGHT:
+        if keys[pygame.K_DOWN] and plane.y < 500 - PLANE_HITBOX_RADIUS:
             plane.y += PLANE_VEL
 
         WindowRender()
@@ -209,8 +209,4 @@ while run:
 
     collision = CheckCollision(plane, bullets)
     
-    
-
-
-
 pygame.quit()
