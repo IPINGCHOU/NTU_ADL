@@ -12,6 +12,7 @@ FRAME_RATE = 150
 # Plane
 PLANE_WIDTH, PLANE_HEIGHT = 25, 50
 PLANE_VEL = 8
+PLANE_HITBOX_RADIUS = 15
 # Bullets
 BULLET_RADIUS = 3
 BULLET_VEL = 10
@@ -49,6 +50,7 @@ class Plane(object):
         self.left = False
         self.right = False
         self.horizontal_move_count = 0
+        self.hitbox = (self.x, self.y)
     
     def render(self, window):
         if self.left:
@@ -66,6 +68,10 @@ class Plane(object):
         else:
             window.blit(PLANE_STAND[0], (self.x,self.y))
             horizontal_move = 0
+        
+        # draw hitbox
+        self.hitbox = (self.x, self.y)
+        pygame.draw.circle(window, RED, self.hitbox, PLANE_HITBOX_RADIUS, 2)
 
 class Bullet(object):
     def __init__(self, color, plane_x, plane_y):
@@ -145,4 +151,5 @@ while run:
         plane.y += PLANE_VEL
     
     WindowRender()
+
 pygame.quit()
