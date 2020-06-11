@@ -10,13 +10,16 @@ import math
 WIN_WIDTH, WIN_HEIGHT = 500, 500
 FRAME_RATE = 150
 # Plane
-PLANE_WIDTH, PLANE_HEIGHT = 25, 50
+PLANE_WIDTH, PLANE_HEIGHT = 26, 50
 PLANE_VEL = 8
-PLANE_HITBOX_RADIUS = 15
+PLANE_HITBOX_RADIUS = 5
+# Explode
+EXPLODE_WIDTH, EXPLODE_HEIGHT = 30,30
+EXPLODE_LATENCY = 1
 # Bullets
-BULLET_RADIUS = 3
-BULLET_VEL = 10
-MAX_BULLETS = 100
+BULLET_RADIUS = 2
+BULLET_VEL = 5
+MAX_BULLETS = 50
 # Colors
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -28,13 +31,16 @@ YELLOW = (255, 255, 255)
 # read plane images
 GAME_FOLDER = '/disk2/iping/NTU_ADL/ADL_Final'
 plane_size = (PLANE_WIDTH, PLANE_HEIGHT)
+explode_size = (EXPLODE_WIDTH, EXPLODE_HEIGHT)
 PLANE_LEFT, PLANE_RIGHT, PLANE_STAND = [], [], []
-PLANE_LEFT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','{}.png'.format(2))), plane_size))
-PLANE_LEFT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','{}.png'.format(1))), plane_size))
-PLANE_RIGHT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','{}.png'.format(4))), plane_size))
-PLANE_RIGHT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','{}.png'.format(5))), plane_size))
-PLANE_STAND.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','{}.png'.format(3))), plane_size))
-
+PLANE_LEFT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','plane','{}.png'.format(2))), plane_size))
+PLANE_LEFT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','plane','{}.png'.format(1))), plane_size))
+PLANE_RIGHT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','plane','{}.png'.format(4))), plane_size))
+PLANE_RIGHT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','plane','{}.png'.format(5))), plane_size))
+PLANE_STAND.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','plane','{}.png'.format(3))), plane_size))
+EXPLODE = []
+for i in range(24):
+    EXPLODE.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','explode','tile{:03}.png'.format(i))), explode_size))
 
 window = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
 pygame.display.set_caption('bullet hell drill')
@@ -51,22 +57,25 @@ class Plane(object):
         self.right = False
         self.horizontal_move_count = 0
         self.hitbox = (self.x, self.y)
+        self.explode = 0
     
     def render(self, window):
+        x_render = self.x-PLANE_WIDTH/2
+        y_render = self.y-PLANE_HEIGHT/2
         if self.left:
             if self.horizontal_move <= 5:
-                window.blit(PLANE_LEFT[0], (self.x,self.y))
+                window.blit(PLANE_LEFT[0], (x_render,y_render))
             else:
-                window.blit(PLANE_LEFT[1], (self.x,self.y))
+                window.blit(PLANE_LEFT[1], (x_render,y_render))
             self.horizontal_move += 1
         elif self.right:
             if self.horizontal_move <= 5:
-                window.blit(PLANE_RIGHT[0], (self.x,self.y))
+                window.blit(PLANE_RIGHT[0], (x_render,y_render))
             else:
-                window.blit(PLANE_RIGHT[1], (self.x,self.y))
+                window.blit(PLANE_RIGHT[1], (x_render,y_render))
             self.horizontal_move += 1
         else:
-            window.blit(PLANE_STAND[0], (self.x,self.y))
+            window.blit(PLANE_STAND[0], (x_render,y_render))
             horizontal_move = 0
         
         # draw hitbox
@@ -99,6 +108,23 @@ class Bullet(object):
     def render(self, window):
         pygame.draw.circle(window, self.color, (int(self.x), int(self.y)), self.radius)
 
+class Explode(object):
+    def __init__(self, x, y):
+        self.x = x - PLANE_WIDTH/2
+        self.y = y - PLANE_HEIGHT/2
+        self.tick_counter = 0
+        self.ani_counter = 0
+        self.length = len(EXPLODE)
+
+    def render(self, window):
+        window.blit(EXPLODE[self.ani_counter], (self.x, self.y))
+        self.tick_counter += 1
+        self.ani_counter += 1
+
+        # if self.tick_counter % EXPLODE_LATENCY == 0:
+        #     self.ani_counter += 1
+
+
 def WindowRender():
     window.fill((0,0,0))
     plane.render(window)
@@ -107,49 +133,84 @@ def WindowRender():
 
     pygame.display.update()
 
+def CheckCollision(plane, bullets):
+    for bullet in bullets:
+        distance = math.hypot(plane.x - bullet.x, plane.y - bullet.y)
+        if distance < (PLANE_HITBOX_RADIUS + BULLET_RADIUS):
+            return True
+    return False
+
+def GameOverWindowRender(bullets):
+    window.fill((0,0,0))
+    explode.render(window)
+    pygame.draw.circle(window, RED, plane.hitbox, PLANE_HITBOX_RADIUS, 2)
+    for bullet in bullets:
+        bullet.render(window)
+    pygame.display.update()
+    if explode.ani_counter < len(EXPLODE):
+        return True
+    else:
+        return False
+            
 # init objects
 plane = Plane(250,250) # init starting point of the plane
 bullets = []
 run = True
+collision = False
+explode_made = False
 
 while run:
     clock.tick(FRAME_RATE)
 
-    for event in pygame.event.get():  # This will loop through a list of any keyboard or mouse events.
-        if event.type == pygame.QUIT: # Checks if the red button in the corner of the window is clicked
-            run = False  # Ends the game loop
+    if collision == False: # plane still alive
+        for event in pygame.event.get():  # This will loop through a list of any keyboard or mouse events.
+            if event.type == pygame.QUIT: # Checks if the red button in the corner of the window is clicked
+                run = False  # Ends the game loop
 
-    while len(bullets) < MAX_BULLETS:
-        bullets.append(Bullet(YELLOW, plane.x, plane.y))
+        while len(bullets) < MAX_BULLETS:
+            bullets.append(Bullet(YELLOW, plane.x, plane.y))
+        
+        for bullet in bullets:
+            bullet_exist = False
+            if 0 <= bullet.x and bullet.x <= WIN_WIDTH :
+                if 0 <= bullet.y and bullet.y <= WIN_HEIGHT:
+                    bullet.move()
+                    bullet_exist = True
+
+            if bullet_exist == False:
+                bullets.pop(bullets.index(bullet))
+
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_LEFT] and plane.x > 0: 
+            plane.x -= PLANE_VEL
+            plane.left = True
+            plane.right = False
+        elif keys[pygame.K_RIGHT] and plane.x < 500 - PLANE_VEL - PLANE_WIDTH:
+            plane.x += PLANE_VEL
+            plane.left = False
+            plane.right = True
+        else:
+            plane.left, plane.right = False, False
+            plane.horizontal_move = 0
+
+        if keys[pygame.K_UP] and plane.y > 0:
+            plane.y -= PLANE_VEL
+        if keys[pygame.K_DOWN] and plane.y < 500 - PLANE_HEIGHT:
+            plane.y += PLANE_VEL
+
+        WindowRender()
+
+    else: # plane crashed
+        if explode_made == False:
+            explode = Explode(plane.x, plane.y)
+            explode_made = True
+        
+        run = GameOverWindowRender(bullets)
+
+    collision = CheckCollision(plane, bullets)
     
-    for bullet in bullets:
-        bullet_exist = False
-        if 0 <= bullet.x and bullet.x <= WIN_WIDTH :
-            if 0 <= bullet.y and bullet.y <= WIN_HEIGHT:
-                bullet.move()
-                bullet_exist = True
-
-        if bullet_exist == False:
-            bullets.pop(bullets.index(bullet))
-
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_LEFT] and plane.x > 0: 
-        plane.x -= PLANE_VEL
-        plane.left = True
-        plane.right = False
-    elif keys[pygame.K_RIGHT] and plane.x < 500 - PLANE_VEL - PLANE_WIDTH:
-        plane.x += PLANE_VEL
-        plane.left = False
-        plane.right = True
-    else:
-        plane.left, plane.right = False, False
-        plane.horizontal_move = 0
-
-    if keys[pygame.K_UP] and plane.y > 0:
-        plane.y -= PLANE_VEL
-    if keys[pygame.K_DOWN] and plane.y < 500 - PLANE_HEIGHT:
-        plane.y += PLANE_VEL
     
-    WindowRender()
+
+
 
 pygame.quit()
