@@ -8,18 +8,18 @@ import math
 # game settings
 # game window
 WIN_WIDTH, WIN_HEIGHT = 500, 500
-FRAME_RATE = 150
+FRAME_RATE = 60
 # Plane
 PLANE_WIDTH, PLANE_HEIGHT = 26, 50
-PLANE_VEL = 8
+PLANE_VEL = 3
 PLANE_HITBOX_RADIUS = 5
 # Explode
 EXPLODE_WIDTH, EXPLODE_HEIGHT = 30,30
-EXPLODE_LATENCY = 1
+EXPLODE_LATENCY = 5
 # Bullets
 BULLET_RADIUS = 2
-BULLET_VEL = 5
-MAX_BULLETS = 50
+BULLET_VEL = 3
+MAX_BULLETS = 80
 # Colors
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -39,7 +39,7 @@ PLANE_RIGHT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FO
 PLANE_RIGHT.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','plane','{}.png'.format(5))), plane_size))
 PLANE_STAND.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','plane','{}.png'.format(3))), plane_size))
 EXPLODE = []
-for i in range(24):
+for i in range(15):
     EXPLODE.append(pygame.transform.scale(pygame.image.load(os.path.join(GAME_FOLDER,'sprites','explode','tile{:03}.png'.format(i))), explode_size))
 
 window = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
@@ -119,10 +119,10 @@ class Explode(object):
     def render(self, window):
         window.blit(EXPLODE[self.ani_counter], (self.x, self.y))
         self.tick_counter += 1
-        self.ani_counter += 1
+        # self.ani_counter += 1
 
-        # if self.tick_counter % EXPLODE_LATENCY == 0:
-        #     self.ani_counter += 1
+        if self.tick_counter % EXPLODE_LATENCY == 0:
+            self.ani_counter += 1
 
 
 def WindowRender():
