@@ -29,7 +29,7 @@ BLUE = (0, 0, 255)
 YELLOW = (255, 255, 255)
 
 # read plane images
-GAME_FOLDER = '/disk2/iping/NTU_ADL/ADL_Final'
+GAME_FOLDER = os.path.abspath('.')
 plane_size = (PLANE_WIDTH, PLANE_HEIGHT)
 explode_size = (EXPLODE_WIDTH, EXPLODE_HEIGHT)
 PLANE_LEFT, PLANE_RIGHT, PLANE_STAND = [], [], []
